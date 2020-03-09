@@ -58,7 +58,13 @@ func (c *DbMgt) SetMysqlParam(host, port, user, password, name, charset, loc str
 	c.Host, c.Port = host, port
 	c.User, c.Password = user, password
 	c.Name = name
+	if len(charset) <= 0 {
+		charset = "utf8"
+	}
 	c.CharSet = charset
+	if len(loc) <= 0 {
+		loc = "Local"
+	}
 	c.Loc = loc
 	if parseTime {
 		c.ParseTime = "True"
