@@ -126,7 +126,7 @@ func (c *DbMgt) constructPgArgs() string {
 func (c *DbMgt) constructMysqlArgs() string {
 	return fmt.Sprintf(
 		"%s:%s@(%s:%s)/%s?charset=%s&parseTime=%s&loc=%s",
-		c.User, c.Password, c.Host, c.Port, c.CharSet, c.ParseTime, c.Loc,
+		c.User, c.Password, c.Host, c.Port, c.Name, c.CharSet, c.ParseTime, c.Loc,
 	)
 }
 
