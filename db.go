@@ -50,13 +50,8 @@ func GetEnv(env, defaultEnv string) string {
 	return value
 }
 
-func (c *DbMgt) SetPgParam(host, port, user, password, name string, ssl bool) *DbMgt {
-	c.Host, c.Port = host, port
-	c.User, c.Password = user, password
-	c.Name = name
-	c.Ssl = ssl
-	c.dbDriver = "postgres"
-	return c
+func (c *DbMgt) SetDbParam(host, port, user, password, name string, ssl bool) *DbMgt {
+	return c.SetPgParam(host, port, user, password, name, ssl)
 }
 
 func (c *DbMgt) SetMysqlParam(host, port, user, password, name, charset, loc string, parseTime bool) *DbMgt {
@@ -71,6 +66,15 @@ func (c *DbMgt) SetMysqlParam(host, port, user, password, name, charset, loc str
 		c.ParseTime = "False"
 	}
 	c.dbDriver = "mysql"
+	return c
+}
+
+func (c *DbMgt) SetPgParam(host, port, user, password, name string, ssl bool) *DbMgt {
+	c.Host, c.Port = host, port
+	c.User, c.Password = user, password
+	c.Name = name
+	c.Ssl = ssl
+	c.dbDriver = "postgres"
 	return c
 }
 
@@ -242,7 +246,7 @@ func DefaultDbDbMgt() *DbMgt {
 }
 
 func SetDbParam(host, port, user, password, name string, ssl bool) *DbMgt {
-	return SetPgParam(host, port, user, password, name, ssl)
+	return defaultDb.SetDbParam(host, port, user, password, name, ssl)
 }
 
 func SetMysqlParam(host, port, user, password, name, charset, loc string, parseTime bool) *DbMgt {
