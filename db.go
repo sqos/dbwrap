@@ -2,8 +2,12 @@ package dbwrap
 
 import (
 	"database/sql"
+	"fmt"
 	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/mssql"
+	_ "github.com/jinzhu/gorm/dialects/mysql"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
+	_ "github.com/jinzhu/gorm/dialects/sqlite"
 	"log"
 	"os"
 	"sync"
@@ -19,14 +23,19 @@ var (
 type AssociationFunc func(*gorm.DB) *gorm.DB
 
 type DbMgt struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	Name     string
-	Ssl      bool
-	Log      *log.Logger
+	Host      string
+	Port      string
+	User      string
+	Password  string
+	Name      string
+	Ssl       bool
+	CharSet   string // default 'utf8'
+	ParseTime string // value is 'True' and 'False', default 'True'
+	Loc       string // default 'Local'
+	Path      string
+	Log       *log.Logger
 
+	dbDriver        string
 	db              *gorm.DB
 	models          []interface{}
 	associationFunc []AssociationFunc
@@ -41,11 +50,41 @@ func GetEnv(env, defaultEnv string) string {
 	return value
 }
 
-func (c *DbMgt) SetDbParam(host, port, user, password, name string, ssl bool) *DbMgt {
+func (c *DbMgt) SetPgParam(host, port, user, password, name string, ssl bool) *DbMgt {
 	c.Host, c.Port = host, port
 	c.User, c.Password = user, password
 	c.Name = name
 	c.Ssl = ssl
+	c.dbDriver = "postgres"
+	return c
+}
+
+func (c *DbMgt) SetMysqlParam(host, port, user, password, name, charset, loc string, parseTime bool) *DbMgt {
+	c.Host, c.Port = host, port
+	c.User, c.Password = user, password
+	c.Name = name
+	c.CharSet = charset
+	c.Loc = loc
+	if parseTime {
+		c.ParseTime = "True"
+	} else {
+		c.ParseTime = "False"
+	}
+	c.dbDriver = "mysql"
+	return c
+}
+
+func (c *DbMgt) SetSqlite3Param(path string) *DbMgt {
+	c.Path = path
+	c.dbDriver = "sqlite3"
+	return c
+}
+
+func (c *DbMgt) SetMssqlParam(host, port, user, password, name string) *DbMgt {
+	c.Host, c.Port = host, port
+	c.User, c.Password = user, password
+	c.Name = name
+	c.dbDriver = "mssql"
 	return c
 }
 
@@ -74,8 +113,31 @@ func (c *DbMgt) constructPgArgs() string {
 	return p
 }
 
+func (c *DbMgt) constructMysqlArgs() string {
+	return fmt.Sprintf(
+		"%s:%s@(%s:%s)/%s?charset=%s&parseTime=%s&loc=%s",
+		c.User, c.Password, c.Host, c.Port, c.CharSet, c.ParseTime, c.Loc,
+	)
+}
+
+func (c *DbMgt) constructSqlite3Args() string {
+	return c.Path
+}
+
+func (c *DbMgt) constructMssqlArgs() string {
+	return fmt.Sprintf("sqlserver://%s:%s@%s:%s?database=%s", c.User, c.Password, c.Host, c.Port, c.Name)
+}
+
 func (c *DbMgt) Db() *gorm.DB {
 	return c.db
+}
+
+func (c *DbMgt) open(driver, args string) error {
+	db, err := gorm.Open(driver, args)
+	if err == nil {
+		c.db = db
+	}
+	return err
 }
 
 func (c *DbMgt) Open() error {
@@ -84,11 +146,18 @@ func (c *DbMgt) Open() error {
 	if c.db != nil {
 		return nil
 	}
-	db, err := gorm.Open("postgres", c.constructPgArgs())
-	if err == nil {
-		c.db = db
+	switch c.dbDriver {
+	case "mysql":
+		return c.open(c.dbDriver, c.constructMysqlArgs())
+	case "postgres":
+		return c.open(c.dbDriver, c.constructPgArgs())
+	case "sqlite3":
+		return c.open(c.dbDriver, c.constructSqlite3Args())
+	case "mssql":
+		return c.open(c.dbDriver, c.constructMssqlArgs())
+	default:
+		return fmt.Errorf("not support driver %v", c.dbDriver)
 	}
-	return err
 }
 
 func (c *DbMgt) Close() error {
@@ -173,8 +242,23 @@ func DefaultDbDbMgt() *DbMgt {
 }
 
 func SetDbParam(host, port, user, password, name string, ssl bool) *DbMgt {
-	defaultDb.SetDbParam(host, port, user, password, name, ssl)
-	return defaultDb
+	return SetPgParam(host, port, user, password, name, ssl)
+}
+
+func SetMysqlParam(host, port, user, password, name, charset, loc string, parseTime bool) *DbMgt {
+	return defaultDb.SetMysqlParam(host, port, user, password, name, charset, loc, parseTime)
+}
+
+func SetPgParam(host, port, user, password, name string, ssl bool) *DbMgt {
+	return defaultDb.SetPgParam(host, port, user, password, name, ssl)
+}
+
+func SetSqlite3Param(path string) *DbMgt {
+	return defaultDb.SetSqlite3Param(path)
+}
+
+func SetMssqlParam(host, port, user, password, name string) *DbMgt {
+	return defaultDb.SetMssqlParam(host, port, user, password, name)
 }
 
 func Db() *gorm.DB {
