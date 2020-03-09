@@ -1,6 +1,7 @@
-package db
+package dbwrap
 
 import (
+	"database/sql"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	"log"
@@ -10,7 +11,9 @@ import (
 )
 
 var (
-	defaultDb = &DbMgt{}
+	defaultDb = &DbMgt{
+		Log: log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
+	}
 )
 
 type AssociationFunc func(*gorm.DB) *gorm.DB
@@ -22,6 +25,7 @@ type DbMgt struct {
 	Password string
 	Name     string
 	Ssl      bool
+	Log      *log.Logger
 
 	db              *gorm.DB
 	models          []interface{}
@@ -74,14 +78,17 @@ func (c *DbMgt) Db() *gorm.DB {
 	return c.db
 }
 
-func (c *DbMgt) Open() (err error) {
+func (c *DbMgt) Open() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if c.db != nil {
 		return nil
 	}
-	c.db, err = gorm.Open("postgres", c.constructPgArgs())
-	return
+	db, err := gorm.Open("postgres", c.constructPgArgs())
+	if err == nil {
+		c.db = db
+	}
+	return err
 }
 
 func (c *DbMgt) Close() error {
@@ -112,11 +119,13 @@ func (c *DbMgt) OpenUntilOk(retryInterval time.Duration) bool {
 		return true
 	}
 	for range time.NewTicker(retryInterval).C {
-		if err := c.Open(); err != nil {
-			log.Println("open db error, retry after %v, %v\n", retryInterval, err)
-			return false
+		if err := c.Open(); err == nil {
+			return true
+		} else {
+			if c.Log != nil {
+				c.Log.Println(err)
+			}
 		}
-		break
 	}
 	return true
 }
@@ -145,6 +154,18 @@ func (c *DbMgt) OpenUntilOkAndCreateTables(retryInterval time.Duration, models .
 		panic("open db failed")
 	}
 	return c
+}
+
+func (c *DbMgt) CommonDB() *sql.DB {
+	if db, ok := c.Db().CommonDB().(*sql.DB); ok {
+		return db
+	} else {
+		return nil
+	}
+}
+
+func (c *DbMgt) SetLogger(l gorm.Logger) {
+	c.Db().SetLogger(l)
 }
 
 func DefaultDbDbMgt() *DbMgt {
@@ -190,4 +211,12 @@ func OpenUntilOkAndCreateTables(retryInterval time.Duration, models ...interface
 
 func IsRecordNotFoundError(err error) bool {
 	return gorm.IsRecordNotFoundError(err)
+}
+
+func CommonDB() *sql.DB {
+	return defaultDb.CommonDB()
+}
+
+func SetLogger(l gorm.Logger) {
+	defaultDb.SetLogger(l)
 }
