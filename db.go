@@ -15,6 +15,7 @@ import (
 )
 
 var (
+	dbWrapDebug = GetEnv("DBWRAP_DEBUG", "false")
 	defaultDb = &DbMgt{
 		Log: log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 	}
@@ -147,6 +148,9 @@ func (c *DbMgt) open(driver, args string) error {
 	if err == nil {
 		c.db = db
 	}
+	if dbWrapDebug != "false" {
+		c.db = c.db.Debug()
+	}
 	return err
 }
 
@@ -243,10 +247,6 @@ func (c *DbMgt) CommonDB() *sql.DB {
 	}
 }
 
-func (c *DbMgt) SetLogger(l gorm.Logger) {
-	c.Db().SetLogger(l)
-}
-
 func DefaultDbDbMgt() *DbMgt {
 	return defaultDb
 }
@@ -311,6 +311,3 @@ func CommonDB() *sql.DB {
 	return defaultDb.CommonDB()
 }
 
-func SetLogger(l gorm.Logger) {
-	defaultDb.SetLogger(l)
-}
