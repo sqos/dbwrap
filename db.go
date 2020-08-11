@@ -1,22 +1,24 @@
 package dbwrap
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mssql"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	_ "github.com/jinzhu/gorm/dialects/sqlite"
-	"log"
-	"os"
-	"sync"
-	"time"
 )
 
 var (
 	dbWrapDebug = GetEnv("DBWRAP_DEBUG", "false")
-	defaultDb = &DbMgt{
+	defaultDb   = &DbMgt{
 		Log: log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 	}
 )
@@ -247,6 +249,19 @@ func (c *DbMgt) CommonDB() *sql.DB {
 	}
 }
 
+func (c *DbMgt) Keepalive(ctx context.Context, table interface{}, interval time.Duration) {
+	tick := time.NewTicker(interval)
+	for {
+		select {
+		case <-ctx.Done():
+			break
+		case <-tick.C:
+			c.Db().HasTable(table)
+			break
+		}
+	}
+}
+
 func DefaultDbDbMgt() *DbMgt {
 	return defaultDb
 }
@@ -311,3 +326,6 @@ func CommonDB() *sql.DB {
 	return defaultDb.CommonDB()
 }
 
+func Keepalive(ctx context.Context, table interface{}, interval time.Duration) {
+	defaultDb.Keepalive(ctx, table, interval)
+}
