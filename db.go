@@ -17,8 +17,7 @@ import (
 )
 
 var (
-	dbWrapDebug = GetEnv("DBWRAP_DEBUG", "false")
-	defaultDb   = &DbMgt{
+	defaultDb = &DbMgt{
 		Log: log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 	}
 )
@@ -37,6 +36,7 @@ type DbMgt struct {
 	Loc       string // default 'Local'
 	Path      string
 	Log       *log.Logger
+	Debug     bool
 
 	dbDriver        string
 	db              *gorm.DB
@@ -142,16 +142,17 @@ func (c *DbMgt) constructMssqlArgs() string {
 }
 
 func (c *DbMgt) Db() *gorm.DB {
-	return c.db
+	if c.Debug {
+		return c.db.Debug()
+	} else {
+		return c.db
+	}
 }
 
 func (c *DbMgt) open(driver, args string) error {
 	db, err := gorm.Open(driver, args)
 	if err == nil {
 		c.db = db
-	}
-	if dbWrapDebug != "false" {
-		c.db = c.db.Debug()
 	}
 	return err
 }
@@ -254,7 +255,7 @@ func (c *DbMgt) Keepalive(ctx context.Context, table interface{}, interval time.
 	for {
 		select {
 		case <-ctx.Done():
-			break
+			return
 		case <-tick.C:
 			c.Db().HasTable(table)
 			break
@@ -262,7 +263,7 @@ func (c *DbMgt) Keepalive(ctx context.Context, table interface{}, interval time.
 	}
 }
 
-func DefaultDbDbMgt() *DbMgt {
+func DefaultDbMgt() *DbMgt {
 	return defaultDb
 }
 
