@@ -3,54 +3,36 @@ package dbwrap
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"sync"
 	"time"
 
-	"github.com/jinzhu/gorm"
-	_ "github.com/jinzhu/gorm/dialects/mssql"
-	_ "github.com/jinzhu/gorm/dialects/mysql"
-	_ "github.com/jinzhu/gorm/dialects/postgres"
-	_ "github.com/jinzhu/gorm/dialects/sqlite"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
+	"gorm.io/driver/sqlserver"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-var (
-	defaultDb = &DbMgt{
-		Log: log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
-	}
-)
+var defaultDb = New(false, nil)
 
 type AssociationFunc func(*gorm.DB) *gorm.DB
 
 type DbMgt struct {
-	Host      string
-	Port      string
-	User      string
-	Password  string
-	Name      string
-	Ssl       bool
-	CharSet   string // default 'utf8'
-	ParseTime string // value is 'True' and 'False', default 'True'
-	Loc       string // default 'Local'
-	Path      string
-	Log       *log.Logger
-	Debug     bool
-
-	dbDriver        string
-	db              *gorm.DB
+	debug           bool
+	openFunc        func(dsn string) gorm.Dialector
+	dsn             string
 	models          []interface{}
 	associationFunc []AssociationFunc
-	lock            sync.Mutex
-}
 
-func GetEnv(env, defaultEnv string) string {
-	value := os.Getenv(env)
-	if len(value) == 0 {
-		value = defaultEnv
-	}
-	return value
+	log  logger.Interface
+	cfg  *gorm.Config
+	db   *gorm.DB
+	lock sync.Mutex
 }
 
 func (c *DbMgt) SetDbParam(host, port, user, password, name string, ssl bool) *DbMgt {
@@ -58,103 +40,61 @@ func (c *DbMgt) SetDbParam(host, port, user, password, name string, ssl bool) *D
 }
 
 func (c *DbMgt) SetMysqlParam(host, port, user, password, name, charset, loc string, parseTime bool) *DbMgt {
-	c.Host, c.Port = host, port
-	c.User, c.Password = user, password
-	c.Name = name
 	if len(charset) <= 0 {
 		charset = "utf8"
 	}
-	c.CharSet = charset
 	if len(loc) <= 0 {
 		loc = "Local"
 	}
-	c.Loc = loc
+	parsetime := "False"
 	if parseTime {
-		c.ParseTime = "True"
-	} else {
-		c.ParseTime = "False"
+		parsetime = "True"
 	}
-	c.dbDriver = "mysql"
+	c.openFunc = mysql.Open
+	c.dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=%s&parseTime=%s&loc=%s", user, password, host, port, name, charset, parsetime, loc)
 	return c
 }
 
 func (c *DbMgt) SetPgParam(host, port, user, password, name string, ssl bool) *DbMgt {
-	c.Host, c.Port = host, port
-	c.User, c.Password = user, password
-	c.Name = name
-	c.Ssl = ssl
-	c.dbDriver = "postgres"
+	c.openFunc = postgres.Open
+	c.dsn += "host=" + host
+	if len(port) > 0 {
+		c.dsn += " port=" + port
+	}
+	if len(user) > 0 {
+		c.dsn += " user=" + user
+	}
+	if len(password) > 0 {
+		c.dsn += " password=" + password
+	}
+	if len(name) > 0 {
+		c.dsn += " dbname=" + name
+	}
+	if ssl {
+		c.dsn += " sslmode=enable"
+	} else {
+		c.dsn += " sslmode=disable"
+	}
 	return c
 }
 
 func (c *DbMgt) SetSqlite3Param(path string) *DbMgt {
-	c.Path = path
-	c.dbDriver = "sqlite3"
+	c.openFunc, c.dsn = sqlite.Open, path
 	return c
 }
 
-func (c *DbMgt) SetMssqlParam(host, port, user, password, name string) *DbMgt {
-	c.Host, c.Port = host, port
-	c.User, c.Password = user, password
-	c.Name = name
-	c.dbDriver = "mssql"
+func (c *DbMgt) SetSqlServerParam(host, port, user, password, name string) *DbMgt {
+	c.openFunc = sqlserver.Open
+	c.dsn = fmt.Sprintf("sqlserver://%s:%s@%s:%s?database=%s", user, password, host, port, name)
 	return c
-}
-
-func (c *DbMgt) constructPgArgs() string {
-	var p string
-	if len(c.Host) > 0 {
-		p += "host=" + c.Host
-	}
-	if len(c.Port) > 0 {
-		p += " port=" + c.Port
-	}
-	if len(c.User) > 0 {
-		p += " user=" + c.User
-	}
-	if len(c.Password) > 0 {
-		p += " password=" + c.Password
-	}
-	if len(c.Name) > 0 {
-		p += " dbname=" + c.Name
-	}
-	if c.Ssl {
-		p += " sslmode=enable"
-	} else {
-		p += " sslmode=disable"
-	}
-	return p
-}
-
-func (c *DbMgt) constructMysqlArgs() string {
-	return fmt.Sprintf(
-		"%s:%s@(%s:%s)/%s?charset=%s&parseTime=%s&loc=%s",
-		c.User, c.Password, c.Host, c.Port, c.Name, c.CharSet, c.ParseTime, c.Loc,
-	)
-}
-
-func (c *DbMgt) constructSqlite3Args() string {
-	return c.Path
-}
-
-func (c *DbMgt) constructMssqlArgs() string {
-	return fmt.Sprintf("sqlserver://%s:%s@%s:%s?database=%s", c.User, c.Password, c.Host, c.Port, c.Name)
 }
 
 func (c *DbMgt) Db() *gorm.DB {
-	if c.Debug {
+	if c.debug {
 		return c.db.Debug()
 	} else {
 		return c.db
 	}
-}
-
-func (c *DbMgt) open(driver, args string) error {
-	db, err := gorm.Open(driver, args)
-	if err == nil {
-		c.db = db
-	}
-	return err
 }
 
 func (c *DbMgt) Open() error {
@@ -163,27 +103,33 @@ func (c *DbMgt) Open() error {
 	if c.db != nil {
 		return nil
 	}
-	switch c.dbDriver {
-	case "mysql":
-		return c.open(c.dbDriver, c.constructMysqlArgs())
-	case "postgres":
-		return c.open(c.dbDriver, c.constructPgArgs())
-	case "sqlite3":
-		return c.open(c.dbDriver, c.constructSqlite3Args())
-	case "mssql":
-		return c.open(c.dbDriver, c.constructMssqlArgs())
-	default:
-		return fmt.Errorf("not support driver %v", c.dbDriver)
+	db, err := gorm.Open(c.openFunc(c.dsn), c.cfg)
+	if err == nil {
+		if sqlDB, err := db.DB(); err != nil {
+			return err
+		} else if err = sqlDB.Ping(); err != nil {
+			return err
+		}
+		c.db = db
+	}
+	return err
+}
+
+func (c *DbMgt) close() error {
+	if c.db == nil {
+		return nil
+	}
+	if sqlDb, err := c.db.DB(); err != nil {
+		return err
+	} else {
+		return sqlDb.Close()
 	}
 }
 
 func (c *DbMgt) Close() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if c.db == nil {
-		return nil
-	}
-	return c.db.Close()
+	return c.close()
 }
 
 func (c *DbMgt) Register(models ...interface{}) *DbMgt {
@@ -208,9 +154,7 @@ func (c *DbMgt) OpenUntilOk(retryInterval time.Duration) bool {
 		if err := c.Open(); err == nil {
 			return true
 		} else {
-			if c.Log != nil {
-				c.Log.Println(err)
-			}
+			c.log.Error(nil, err.Error())
 		}
 	}
 	return true
@@ -218,11 +162,8 @@ func (c *DbMgt) OpenUntilOk(retryInterval time.Duration) bool {
 
 func (c *DbMgt) CreateTables(models ...interface{}) *DbMgt {
 	c.models = append(c.models, models...)
-	for _, err := range c.db.AutoMigrate(c.models...).GetErrors() {
-		if err == nil {
-			continue
-		}
-		c.db.Close()
+	if err := c.db.AutoMigrate(c.models...); err != nil {
+		c.close()
 		panic(err)
 	}
 	for _, fc := range c.associationFunc {
@@ -234,30 +175,44 @@ func (c *DbMgt) CreateTables(models ...interface{}) *DbMgt {
 }
 
 func (c *DbMgt) OpenUntilOkAndCreateTables(retryInterval time.Duration, models ...interface{}) *DbMgt {
-	if c.OpenUntilOk(retryInterval) {
-		c.CreateTables(models...)
-	} else {
-		panic("open db failed")
+	c.OpenUntilOk(retryInterval)
+	c.CreateTables(models...)
+	return c
+}
+
+func (c *DbMgt) DropTableIfExists(models ...interface{}) *DbMgt {
+	if err := c.Db().Migrator().DropTable(models...); err != nil && c.log != nil {
+		c.log.Error(nil, err.Error())
 	}
 	return c
 }
 
+func (c *DbMgt) OpenUntilOkAndDropTableIfExistsThenCreateTables(retryInterval time.Duration, models ...interface{}) *DbMgt {
+	c.OpenUntilOk(retryInterval)
+	c.DropTableIfExists(models...).CreateTables(models...)
+	return c
+}
+
 func (c *DbMgt) CommonDB() *sql.DB {
-	if db, ok := c.Db().CommonDB().(*sql.DB); ok {
+	if db, err := c.Db().DB(); err == nil {
 		return db
 	} else {
 		return nil
 	}
 }
 
-func (c *DbMgt) Keepalive(ctx context.Context, table interface{}, interval time.Duration) {
+func (c *DbMgt) Keepalive(ctx context.Context, interval time.Duration) {
 	tick := time.NewTicker(interval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			c.Db().HasTable(table)
+			if db := c.CommonDB(); db != nil {
+				if err := db.Ping(); err != nil && c.log != nil {
+					c.log.Error(nil, err.Error())
+				}
+			}
 			break
 		}
 	}
@@ -283,8 +238,8 @@ func SetSqlite3Param(path string) *DbMgt {
 	return defaultDb.SetSqlite3Param(path)
 }
 
-func SetMssqlParam(host, port, user, password, name string) *DbMgt {
-	return defaultDb.SetMssqlParam(host, port, user, password, name)
+func SetSqlServerParam(host, port, user, password, name string) *DbMgt {
+	return defaultDb.SetSqlServerParam(host, port, user, password, name)
 }
 
 func Db() *gorm.DB {
@@ -319,14 +274,40 @@ func OpenUntilOkAndCreateTables(retryInterval time.Duration, models ...interface
 	return defaultDb.OpenUntilOkAndCreateTables(retryInterval, models...)
 }
 
+func OpenUntilOkAndDropTableIfExistsThenCreateTables(retryInterval time.Duration, models ...interface{}) *DbMgt {
+	return defaultDb.OpenUntilOkAndDropTableIfExistsThenCreateTables(retryInterval, models...)
+}
+
 func IsRecordNotFoundError(err error) bool {
-	return gorm.IsRecordNotFoundError(err)
+	return errors.Is(err, gorm.ErrRecordNotFound)
 }
 
 func CommonDB() *sql.DB {
 	return defaultDb.CommonDB()
 }
 
-func Keepalive(ctx context.Context, table interface{}, interval time.Duration) {
-	defaultDb.Keepalive(ctx, table, interval)
+func Keepalive(ctx context.Context, interval time.Duration) {
+	defaultDb.Keepalive(ctx, interval)
+}
+
+func New(debug bool, cfg *gorm.Config) *DbMgt {
+	mgt := &DbMgt{debug: debug, cfg: cfg}
+	if mgt.cfg == nil {
+		mgt.cfg = &gorm.Config{
+			PrepareStmt: true,
+		}
+	}
+	mgt.log = logger.Default
+	if debug {
+		logger.Default = logger.New(
+			log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
+			logger.Config{SlowThreshold: 200 * time.Millisecond, LogLevel: logger.Warn, Colorful: true},
+		)
+		if mgt.cfg.Logger == nil {
+			mgt.cfg.Logger = logger.Default
+		}
+	} else {
+		logger.Default = logger.Discard
+	}
+	return mgt
 }
