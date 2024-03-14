@@ -4,7 +4,7 @@ go 1.15
 
 require (
 	github.com/denisenkom/go-mssqldb v0.10.0 // indirect
-	github.com/jackc/pgproto3/v2 v2.0.7 // indirect
+	github.com/jackc/pgproto3/v2 v2.3.3 // indirect
 	github.com/mattn/go-sqlite3 v1.14.7 // indirect
 	golang.org/x/text v0.3.8 // indirect
 	gorm.io/driver/mysql v1.1.0
